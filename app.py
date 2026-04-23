@@ -34,9 +34,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-@app.before_first_request
-def setup():
+try:
     init_db()
+except Exception as e:
+    print(f"DB init error: {e}")
 
 def run_query(filters, page, limit):
     where, params = [], []
