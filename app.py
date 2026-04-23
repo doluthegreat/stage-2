@@ -1,4 +1,4 @@
-import os, re, uuid6
+import os, re, uuid6, traceback
 import requests as req
 import psycopg2
 from flask import Flask, request, jsonify
@@ -36,69 +36,92 @@ def init_db():
 
 try:
     init_db()
+    print("✅ DB ready")
 except Exception as e:
-    print(f"DB init error: {e}")
+    traceback.print_exc()
+    print(f"❌ DB init failed: {e}")
 
+# ── Health check ──────────────────────────────────────────────
+@app.route("/health")
+def health():
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM profiles")
+        count = c.fetchone()[0]
+        conn.close()
+        return jsonify({"status": "ok", "db": "connected", "profiles": count})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "detail": str(e)}), 500
+
+# ── Core query runner ─────────────────────────────────────────
 def run_query(filters, page, limit):
-    where, params = [], []
+    try:
+        where, params = [], []
 
-    for key, col in [("gender","gender"),("age_group","age_group"),("country_id","country_id")]:
-        if key in filters:
-            where.append(f"{col} = %s")
-            params.append(filters[key])
+        for key, col in [("gender","gender"),("age_group","age_group"),("country_id","country_id")]:
+            if key in filters:
+                where.append(f"{col} = %s")
+                params.append(filters[key])
 
-    if "min_age" in filters:
-        where.append("age >= %s"); params.append(filters["min_age"])
-    if "max_age" in filters:
-        where.append("age <= %s"); params.append(filters["max_age"])
-    if "min_gender_probability" in filters:
-        where.append("gender_probability >= %s"); params.append(filters["min_gender_probability"])
-    if "min_country_probability" in filters:
-        where.append("country_probability >= %s"); params.append(filters["min_country_probability"])
+        if "min_age" in filters:
+            where.append("age >= %s"); params.append(filters["min_age"])
+        if "max_age" in filters:
+            where.append("age <= %s"); params.append(filters["max_age"])
+        if "min_gender_probability" in filters:
+            where.append("gender_probability >= %s"); params.append(filters["min_gender_probability"])
+        if "min_country_probability" in filters:
+            where.append("country_probability >= %s"); params.append(filters["min_country_probability"])
 
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    sort_col = filters.get("sort_by", "created_at")
-    order = filters.get("order", "asc").upper()
-    offset = (page - 1) * limit
+        sort_col = filters.get("sort_by", "created_at")
+        order = filters.get("order", "asc").upper()
+        offset = (page - 1) * limit
 
-    conn = get_conn()
-    c = conn.cursor()
+        conn = get_conn()
+        c = conn.cursor()
 
-    c.execute(f"SELECT COUNT(*) FROM profiles {where_sql}", params)
-    total = c.fetchone()[0]
+        c.execute(f"SELECT COUNT(*) FROM profiles {where_sql}", params)
+        total = c.fetchone()[0]
 
-    c.execute(f"""
-        SELECT id, name, gender, gender_probability, age, age_group,
-               country_id, country_name, country_probability, created_at
-        FROM profiles
-        {where_sql}
-        ORDER BY {sort_col} {order}
-        LIMIT %s OFFSET %s
-    """, params + [limit, offset])
+        c.execute(f"""
+            SELECT id, name, gender, gender_probability, age, age_group,
+                   country_id, country_name, country_probability, created_at
+            FROM profiles
+            {where_sql}
+            ORDER BY {sort_col} {order}
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
 
-    rows = c.fetchall()
-    conn.close()
+        rows = c.fetchall()
+        conn.close()
 
-    return jsonify({
-        "status": "success",
-        "page": page,
-        "limit": limit,
-        "total": total,
-        "data": [{
-            "id": str(r[0]),
-            "name": r[1],
-            "gender": r[2],
-            "gender_probability": r[3],
-            "age": r[4],
-            "age_group": r[5],
-            "country_id": r[6],
-            "country_name": r[7],
-            "country_probability": r[8],
-            "created_at": r[9].strftime("%Y-%m-%dT%H:%M:%SZ")
-        } for r in rows]
-    }), 200
+        return jsonify({
+            "status": "success",
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "data": [{
+                "id": str(r[0]),
+                "name": r[1],
+                "gender": r[2],
+                "gender_probability": r[3],
+                "age": r[4],
+                "age_group": r[5],
+                "country_id": r[6],
+                "country_name": r[7],
+                "country_probability": r[8],
+                "created_at": r[9].strftime("%Y-%m-%dT%H:%M:%SZ")
+            } for r in rows]
+        }), 200
 
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# ── NL parser ─────────────────────────────────────────────────
 def parse_nl(q):
     s = q.lower().strip()
     f = {}
@@ -133,6 +156,7 @@ def parse_nl(q):
 
     return f if f else None
 
+# ── Routes ────────────────────────────────────────────────────
 @app.route("/api/profiles", methods=["GET"])
 def get_profiles():
     try:
@@ -160,7 +184,6 @@ def get_profiles():
             return jsonify({"status":"error","message":"Invalid query parameters"}), 422
         filters["country_id"] = cid.upper()
 
-    # safe parsing
     try:
         if v := request.args.get("min_age"): filters["min_age"] = int(v)
         if v := request.args.get("max_age"): filters["max_age"] = int(v)
@@ -247,31 +270,40 @@ def create():
     conn.close()
 
     return jsonify({"status":"success"}), 201
+
 @app.route("/api/profiles/<profile_id>", methods=["GET"])
 def get_profile(profile_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, name, gender, gender_probability, age, age_group,
-               country_id, country_name, country_probability, created_at
-        FROM profiles WHERE id = %s
-    """, (profile_id,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return jsonify({"status":"error","message":"Profile not found"}), 404
-    return jsonify({"status":"success","data":{
-        "id": str(row[0]), "name": row[1], "gender": row[2],
-        "gender_probability": row[3], "age": row[4], "age_group": row[5],
-        "country_id": row[6], "country_name": row[7],
-        "country_probability": row[8],
-        "created_at": row[9].strftime("%Y-%m-%dT%H:%M:%SZ")
-    }}), 200
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, name, gender, gender_probability, age, age_group,
+                   country_id, country_name, country_probability, created_at
+            FROM profiles WHERE id = %s
+        """, (profile_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"status":"error","message":"Profile not found"}), 404
+        return jsonify({"status":"success","data":{
+            "id": str(row[0]), "name": row[1], "gender": row[2],
+            "gender_probability": row[3], "age": row[4], "age_group": row[5],
+            "country_id": row[6], "country_name": row[7],
+            "country_probability": row[8],
+            "created_at": row[9].strftime("%Y-%m-%dT%H:%M:%SZ")
+        }}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# ── Error handlers ────────────────────────────────────────────
 @app.errorhandler(404)
 def nf(_): return jsonify({"status":"error","message":"Profile not found"}), 404
 
 @app.errorhandler(500)
-def se(_): return jsonify({"status":"error","message":"Internal server error"}), 500
+def se(e):
+    traceback.print_exc()
+    return jsonify({"status":"error","message":"Internal server error"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
