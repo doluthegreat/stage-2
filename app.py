@@ -253,4 +253,5 @@ def nf(_): return jsonify({"status":"error","message":"Profile not found"}), 404
 def se(_): return jsonify({"status":"error","message":"Internal server error"}), 500
 
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
