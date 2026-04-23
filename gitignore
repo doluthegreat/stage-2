@@ -1,6 +1,30 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+
+# Env
 .env
-test.py
-*.db
+.env.*
+
+# Virtual env
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Database (if local testing)
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.swp
