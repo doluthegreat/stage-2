@@ -34,7 +34,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-if os.environ.get("INIT_DB") == "true":
+@app.before_first_request
+def setup():
     init_db()
 
 def run_query(filters, page, limit):
