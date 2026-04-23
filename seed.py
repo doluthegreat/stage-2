@@ -1,16 +1,17 @@
-import os, json, uuid6, psycopg2
-from utils import age_to_group, COUNTRY_ID_TO_NAME
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "").replace("postgres://", "postgresql://")
-
 def seed(path):
     with open(path) as f:
         data = json.load(f)
+
+    if isinstance(data, dict) and "data" in data:
+        data = data["data"]
 
     conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
 
     for p in data:
+        if not isinstance(p, dict):
+            continue  # safety guard
+
         name = p["name"].lower()
         age = p["age"]
         cid = p["country_id"]
@@ -27,7 +28,3 @@ def seed(path):
 
     conn.commit()
     conn.close()
-
-if __name__ == "__main__":
-    import sys
-    seed(sys.argv[1])
